@@ -34,6 +34,30 @@ async function stepHandler(
   }
 
   try {
+    // Default schedule: Monday-Friday, 9am-5pm in America/Chicago (Central Time)
+    // Note: Instantly API only accepts specific timezone values from their enum
+    const defaultSchedule = {
+      schedules: [
+        {
+          name: "Default Schedule",
+          timing: {
+            from: "09:00",
+            to: "17:00",
+          },
+          days: {
+            "0": false, // Sunday
+            "1": true, // Monday
+            "2": true, // Tuesday
+            "3": true, // Wednesday
+            "4": true, // Thursday
+            "5": true, // Friday
+            "6": false, // Saturday
+          },
+          timezone: "America/Chicago",
+        },
+      ],
+    };
+
     const response = await fetch(`${INSTANTLY_API_URL}/campaigns`, {
       method: "POST",
       headers: {
@@ -42,6 +66,7 @@ async function stepHandler(
       },
       body: JSON.stringify({
         name: input.name,
+        campaign_schedule: defaultSchedule,
       }),
     });
 
