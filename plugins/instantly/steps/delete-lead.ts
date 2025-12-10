@@ -38,7 +38,6 @@ async function stepHandler(
       method: "DELETE",
       headers: {
         Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
       },
     });
 

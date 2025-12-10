@@ -40,7 +40,6 @@ async function stepHandler(
         method: "POST",
         headers: {
           Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
         },
       }
     );
