@@ -65,109 +65,109 @@ export type RunAgentInput = StepInput &
 // Tool implementations
 
 /**
- * Native web search using DuckDuckGo HTML scraping
- * No API key required - scrapes actual search results
+ * Native web search using multiple free sources
+ * Priority: 1) Wikipedia API, 2) DuckDuckGo Instant Answer API
+ * No API key required
  */
 async function webSearch(query: string): Promise<string> {
   try {
-    // Use DuckDuckGo HTML search (more reliable than Instant Answer API)
-    const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-    const response = await fetch(searchUrl, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        Accept:
-          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(`Search failed: ${response.status}`);
-    }
-
-    const html = await response.text();
-
-    // Parse search results from DuckDuckGo HTML
     const results: { title: string; snippet: string; url: string }[] = [];
 
-    // Match result blocks - DuckDuckGo uses class="result" for each result
-    const resultMatches = html.match(
-      /<a class="result__a"[^>]*href="([^"]*)"[^>]*>([^<]*)<\/a>[\s\S]*?<a class="result__snippet"[^>]*>([^<]*(?:<[^>]*>[^<]*)*)<\/a>/gi
-    );
+    // Strategy 1: Wikipedia API - reliable and no CAPTCHA
+    try {
+      const wikiResponse = await fetch(
+        `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&srlimit=3&origin=*`
+      );
+      const wikiData = await wikiResponse.json();
 
-    if (resultMatches) {
-      for (const match of resultMatches.slice(0, 5)) {
-        // Extract URL
-        const urlMatch = match.match(/href="([^"]*)"/);
-        // Extract title (text after the href in the result__a link)
-        const titleMatch = match.match(
-          /<a class="result__a"[^>]*>([^<]*)<\/a>/i
-        );
-        // Extract snippet
-        const snippetMatch = match.match(
-          /<a class="result__snippet"[^>]*>([\s\S]*?)<\/a>/i
-        );
+      if (wikiData.query?.search?.length > 0) {
+        for (const result of wikiData.query.search.slice(0, 3)) {
+          results.push({
+            title: result.title,
+            snippet: result.snippet.replace(/<[^>]*>/g, ""),
+            url: `https://en.wikipedia.org/wiki/${encodeURIComponent(result.title.replace(/ /g, "_"))}`,
+          });
+        }
+      }
+    } catch {
+      // Wikipedia failed, continue to next source
+    }
 
-        if (urlMatch && titleMatch) {
-          const url = urlMatch[1];
-          const title = titleMatch[1].trim();
-          const snippet = snippetMatch
-            ? snippetMatch[1].replace(/<[^>]*>/g, "").trim()
-            : "";
+    // Strategy 2: DuckDuckGo Instant Answer API
+    try {
+      const ddgResponse = await fetch(
+        `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`
+      );
+      const ddgData = await ddgResponse.json();
 
-          // Skip DuckDuckGo internal links
-          if (url && !url.includes("duckduckgo.com") && title) {
-            results.push({ title, snippet, url });
+      // Add abstract if available
+      if (ddgData.Abstract && ddgData.AbstractURL) {
+        results.push({
+          title: ddgData.Heading || query,
+          snippet: ddgData.Abstract,
+          url: ddgData.AbstractURL,
+        });
+      }
+
+      // Add related topics
+      if (ddgData.RelatedTopics?.length > 0) {
+        for (const topic of ddgData.RelatedTopics.slice(0, 3)) {
+          if (topic.Text && topic.FirstURL) {
+            results.push({
+              title: topic.Text.split(" - ")[0] || topic.Text.slice(0, 50),
+              snippet: topic.Text,
+              url: topic.FirstURL,
+            });
           }
         }
       }
+    } catch {
+      // DuckDuckGo failed, continue
     }
 
-    // Fallback: simpler regex if structured parsing fails
-    if (results.length === 0) {
-      const linkMatches = html.match(
-        /<a[^>]*class="[^"]*result__url[^"]*"[^>]*>([^<]*)<\/a>/gi
-      );
-      const titleMatches = html.match(
-        /<a[^>]*class="[^"]*result__a[^"]*"[^>]*>([^<]*)<\/a>/gi
-      );
+    // Strategy 3: Hacker News Algolia API for tech queries
+    if (
+      results.length < 3 &&
+      /tech|programming|software|startup|ai|machine learning|javascript|python|react|node/i.test(
+        query
+      )
+    ) {
+      try {
+        const hnResponse = await fetch(
+          `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=story&hitsPerPage=3`
+        );
+        const hnData = await hnResponse.json();
 
-      if (titleMatches && linkMatches) {
-        for (let i = 0; i < Math.min(titleMatches.length, 5); i++) {
-          const title = titleMatches[i]?.replace(/<[^>]*>/g, "").trim() || "";
-          const url = linkMatches[i]?.replace(/<[^>]*>/g, "").trim() || "";
-          if (title && url) {
-            results.push({ title, snippet: "", url });
+        if (hnData.hits?.length > 0) {
+          for (const hit of hnData.hits.slice(0, 3)) {
+            if (hit.title && hit.url) {
+              results.push({
+                title: `[HN] ${hit.title}`,
+                snippet: `${hit.points || 0} points, ${hit.num_comments || 0} comments`,
+                url: hit.url,
+              });
+            }
           }
         }
+      } catch {
+        // HN failed, continue
       }
     }
 
     if (results.length === 0) {
-      // Last resort: try the Instant Answer API as fallback
-      const iaResponse = await fetch(
-        `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1`
-      );
-      const iaData = await iaResponse.json();
-
-      if (iaData.Abstract) {
-        return `${iaData.Abstract}\nSource: ${iaData.AbstractURL}`;
-      }
-      if (iaData.RelatedTopics?.length > 0) {
-        return iaData.RelatedTopics.slice(0, 3)
-          .filter((t: { Text?: string }) => t.Text)
-          .map((t: { Text: string; FirstURL?: string }) =>
-            t.FirstURL ? `${t.Text}\nURL: ${t.FirstURL}` : t.Text
-          )
-          .join("\n\n");
-      }
-
-      return "No search results found. Try a different query.";
+      return `No search results found for "${query}". Try rephrasing your query or using more specific terms.`;
     }
+
+    // Deduplicate by URL
+    const seen = new Set<string>();
+    const uniqueResults = results.filter((r) => {
+      if (seen.has(r.url)) return false;
+      seen.add(r.url);
+      return true;
+    });
 
     // Format results
-    return results
+    return uniqueResults
       .map(
         (r, i) =>
           `${i + 1}. ${r.title}\n${r.snippet ? `   ${r.snippet}\n` : ""}   URL: ${r.url}`
