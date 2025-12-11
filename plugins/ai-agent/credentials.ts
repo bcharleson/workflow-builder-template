@@ -14,6 +14,7 @@ export type AiAgentCredentials = {
   GOOGLE_API_KEY?: string;
   GROQ_API_KEY?: string;
   MISTRAL_API_KEY?: string;
+  XAI_API_KEY?: string;
 
   // Meta/Llama models are typically accessed via other providers (Groq, Together, etc.)
   // or via Vercel AI Gateway, so no separate key needed
@@ -43,6 +44,9 @@ export function getProviderApiKey(
       break;
     case "mistral":
       if (credentials.MISTRAL_API_KEY) return credentials.MISTRAL_API_KEY;
+      break;
+    case "xai":
+      if (credentials.XAI_API_KEY) return credentials.XAI_API_KEY;
       break;
   }
 

@@ -186,6 +186,46 @@ const FALLBACK_MODELS: Record<string, ModelInfo[]> = {
     { id: "groq/mixtral-8x7b", name: "Mixtral 8x7B", provider: "groq" },
     { id: "groq/gemma2-9b", name: "Gemma 2 9B", provider: "groq" },
   ],
+  xai: [
+    {
+      id: "xai/grok-3",
+      name: "Grok 3",
+      provider: "xai",
+      supportsTools: true,
+      supportsVision: true,
+    },
+    {
+      id: "xai/grok-3-fast",
+      name: "Grok 3 Fast",
+      provider: "xai",
+      supportsTools: true,
+    },
+    {
+      id: "xai/grok-3-mini",
+      name: "Grok 3 Mini",
+      provider: "xai",
+      supportsTools: true,
+    },
+    {
+      id: "xai/grok-3-mini-fast",
+      name: "Grok 3 Mini Fast",
+      provider: "xai",
+      supportsTools: true,
+    },
+    {
+      id: "xai/grok-2",
+      name: "Grok 2",
+      provider: "xai",
+      supportsTools: true,
+    },
+    {
+      id: "xai/grok-2-vision",
+      name: "Grok 2 Vision",
+      provider: "xai",
+      supportsTools: true,
+      supportsVision: true,
+    },
+  ],
 };
 
 async function fetchOpenAIModels(apiKey: string): Promise<ModelInfo[]> {

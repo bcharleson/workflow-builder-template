@@ -88,6 +88,19 @@ const aiAgentPlugin: IntegrationPlugin = {
         url: "https://console.mistral.ai/api-keys",
       },
     },
+    {
+      id: "xaiApiKey",
+      label: "xAI API Key (Optional)",
+      type: "password",
+      placeholder: "xai-...",
+      configKey: "xaiApiKey",
+      envVar: "XAI_API_KEY",
+      helpText: "Direct Grok access. Get it from ",
+      helpLink: {
+        text: "console.x.ai",
+        url: "https://console.x.ai/",
+      },
+    },
   ],
 
   testConfig: {
@@ -121,6 +134,7 @@ const aiAgentPlugin: IntegrationPlugin = {
             { value: "openai", label: "OpenAI" },
             { value: "anthropic", label: "Anthropic" },
             { value: "google", label: "Google" },
+            { value: "xai", label: "xAI (Grok)" },
             { value: "meta", label: "Meta (Llama)" },
             { value: "mistral", label: "Mistral" },
             { value: "groq", label: "Groq" },
@@ -209,6 +223,21 @@ const aiAgentPlugin: IntegrationPlugin = {
             { value: "groq/llama-3.1-8b", label: "Llama 3.1 8B (Fastest)" },
             { value: "groq/mixtral-8x7b", label: "Mixtral 8x7B" },
             { value: "groq/gemma2-9b", label: "Gemma 2 9B" },
+          ],
+        },
+        {
+          key: "agentModelXai",
+          label: "Model",
+          type: "select",
+          defaultValue: "xai/grok-3",
+          showWhen: { field: "agentProvider", equals: "xai" },
+          options: [
+            { value: "xai/grok-3", label: "Grok 3 (Best)" },
+            { value: "xai/grok-3-fast", label: "Grok 3 Fast" },
+            { value: "xai/grok-3-mini", label: "Grok 3 Mini" },
+            { value: "xai/grok-3-mini-fast", label: "Grok 3 Mini Fast" },
+            { value: "xai/grok-2", label: "Grok 2" },
+            { value: "xai/grok-2-vision", label: "Grok 2 Vision" },
           ],
         },
         // Advanced Model Configuration

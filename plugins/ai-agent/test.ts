@@ -14,7 +14,8 @@ export async function testAiAgent(credentials: Record<string, string>) {
       typedCredentials.ANTHROPIC_API_KEY ||
       typedCredentials.GOOGLE_API_KEY ||
       typedCredentials.GROQ_API_KEY ||
-      typedCredentials.MISTRAL_API_KEY;
+      typedCredentials.MISTRAL_API_KEY ||
+      typedCredentials.XAI_API_KEY;
 
     if (!hasAnyKey) {
       return {
@@ -35,7 +36,9 @@ export async function testAiAgent(credentials: Record<string, string>) {
             ? "google"
             : typedCredentials.GROQ_API_KEY
               ? "groq"
-              : "mistral";
+              : typedCredentials.XAI_API_KEY
+                ? "xai"
+                : "mistral";
 
     const apiKey = getProviderApiKey(typedCredentials, testProvider);
 
@@ -58,7 +61,9 @@ export async function testAiAgent(credentials: Record<string, string>) {
             ? "groq/llama-3.1-8b"
             : testProvider === "mistral"
               ? "mistral/mistral-small"
-              : "openai/gpt-4o-mini";
+              : testProvider === "xai"
+                ? "xai/grok-3-mini-fast"
+                : "openai/gpt-4o-mini";
 
     await generateText({
       model: gateway(testModel),

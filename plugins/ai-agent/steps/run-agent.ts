@@ -35,6 +35,7 @@ export type RunAgentCoreInput = {
   agentModelMeta?: string;
   agentModelMistral?: string;
   agentModelGroq?: string;
+  agentModelXai?: string;
 
   // Advanced model configuration
   agentShowAdvanced?: string;
@@ -225,6 +226,7 @@ async function stepHandler(
     (provider === "meta" && input.agentModelMeta) ||
     (provider === "mistral" && input.agentModelMistral) ||
     (provider === "groq" && input.agentModelGroq) ||
+    (provider === "xai" && input.agentModelXai) ||
     "openai/gpt-4o";
 
   // Get the appropriate API key for the selected provider
