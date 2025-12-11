@@ -53,6 +53,8 @@ export type RunAgentCoreInput = {
   agentTools?: string;
   agentMaxSteps?: string;
   agentSystemPrompt?: string;
+  // Integration IDs
+  agentFirecrawlIntegrationId?: string;
 };
 
 export type RunAgentInput = StepInput &
@@ -61,46 +63,216 @@ export type RunAgentInput = StepInput &
   };
 
 // Tool implementations
-async function webSearch(query: string): Promise<string> {
-  // Use DuckDuckGo instant answer API (no auth required)
-  const response = await fetch(
-    `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1`
-  );
-  const data = await response.json();
 
-  if (data.Abstract) {
-    return `${data.Abstract}\nSource: ${data.AbstractURL}`;
+/**
+ * Native web search using DuckDuckGo HTML scraping
+ * No API key required - scrapes actual search results
+ */
+async function webSearch(query: string): Promise<string> {
+  try {
+    // Use DuckDuckGo HTML search (more reliable than Instant Answer API)
+    const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+    const response = await fetch(searchUrl, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Search failed: ${response.status}`);
+    }
+
+    const html = await response.text();
+
+    // Parse search results from DuckDuckGo HTML
+    const results: { title: string; snippet: string; url: string }[] = [];
+
+    // Match result blocks - DuckDuckGo uses class="result" for each result
+    const resultMatches = html.match(
+      /<a class="result__a"[^>]*href="([^"]*)"[^>]*>([^<]*)<\/a>[\s\S]*?<a class="result__snippet"[^>]*>([^<]*(?:<[^>]*>[^<]*)*)<\/a>/gi
+    );
+
+    if (resultMatches) {
+      for (const match of resultMatches.slice(0, 5)) {
+        // Extract URL
+        const urlMatch = match.match(/href="([^"]*)"/);
+        // Extract title (text after the href in the result__a link)
+        const titleMatch = match.match(
+          /<a class="result__a"[^>]*>([^<]*)<\/a>/i
+        );
+        // Extract snippet
+        const snippetMatch = match.match(
+          /<a class="result__snippet"[^>]*>([\s\S]*?)<\/a>/i
+        );
+
+        if (urlMatch && titleMatch) {
+          const url = urlMatch[1];
+          const title = titleMatch[1].trim();
+          const snippet = snippetMatch
+            ? snippetMatch[1].replace(/<[^>]*>/g, "").trim()
+            : "";
+
+          // Skip DuckDuckGo internal links
+          if (url && !url.includes("duckduckgo.com") && title) {
+            results.push({ title, snippet, url });
+          }
+        }
+      }
+    }
+
+    // Fallback: simpler regex if structured parsing fails
+    if (results.length === 0) {
+      const linkMatches = html.match(
+        /<a[^>]*class="[^"]*result__url[^"]*"[^>]*>([^<]*)<\/a>/gi
+      );
+      const titleMatches = html.match(
+        /<a[^>]*class="[^"]*result__a[^"]*"[^>]*>([^<]*)<\/a>/gi
+      );
+
+      if (titleMatches && linkMatches) {
+        for (let i = 0; i < Math.min(titleMatches.length, 5); i++) {
+          const title = titleMatches[i]?.replace(/<[^>]*>/g, "").trim() || "";
+          const url = linkMatches[i]?.replace(/<[^>]*>/g, "").trim() || "";
+          if (title && url) {
+            results.push({ title, snippet: "", url });
+          }
+        }
+      }
+    }
+
+    if (results.length === 0) {
+      // Last resort: try the Instant Answer API as fallback
+      const iaResponse = await fetch(
+        `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1`
+      );
+      const iaData = await iaResponse.json();
+
+      if (iaData.Abstract) {
+        return `${iaData.Abstract}\nSource: ${iaData.AbstractURL}`;
+      }
+      if (iaData.RelatedTopics?.length > 0) {
+        return iaData.RelatedTopics.slice(0, 3)
+          .filter((t: { Text?: string }) => t.Text)
+          .map((t: { Text: string; FirstURL?: string }) =>
+            t.FirstURL ? `${t.Text}\nURL: ${t.FirstURL}` : t.Text
+          )
+          .join("\n\n");
+      }
+
+      return "No search results found. Try a different query.";
+    }
+
+    // Format results
+    return results
+      .map(
+        (r, i) =>
+          `${i + 1}. ${r.title}\n${r.snippet ? `   ${r.snippet}\n` : ""}   URL: ${r.url}`
+      )
+      .join("\n\n");
+  } catch (error) {
+    return `Search failed: ${error instanceof Error ? error.message : "Unknown error"}. Try a different query.`;
   }
-  if (data.RelatedTopics && data.RelatedTopics.length > 0) {
-    const topics = data.RelatedTopics.slice(0, 3)
-      .filter((t: { Text?: string }) => t.Text)
-      .map((t: { Text: string }) => t.Text)
-      .join("\n");
-    return topics || "No results found. Try a more specific query.";
-  }
-  return "No results found. Try a different search query.";
 }
 
+/**
+ * Native URL scraping with improved HTML-to-text extraction
+ * Extracts meaningful content from web pages
+ */
 async function scrapeUrl(url: string): Promise<string> {
   try {
     const response = await fetch(url, {
       headers: {
         "User-Agent":
-          "Mozilla/5.0 (compatible; WorkflowBot/1.0; +https://workflow.vercel.app)",
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
       },
+      redirect: "follow",
     });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
     const html = await response.text();
-    // Basic HTML to text extraction
-    const text = html
+
+    // Extract title
+    const titleMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i);
+    const title = titleMatch ? titleMatch[1].trim() : "";
+
+    // Extract meta description
+    const metaDescMatch = html.match(
+      /<meta[^>]*name=["']description["'][^>]*content=["']([^"']*)["']/i
+    );
+    const metaDesc = metaDescMatch ? metaDescMatch[1].trim() : "";
+
+    // Remove unwanted elements
+    let content = html
+      // Remove scripts, styles, and other non-content elements
       .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
       .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-      .replace(/<[^>]+>/g, " ")
+      .replace(/<nav[^>]*>[\s\S]*?<\/nav>/gi, "")
+      .replace(/<header[^>]*>[\s\S]*?<\/header>/gi, "")
+      .replace(/<footer[^>]*>[\s\S]*?<\/footer>/gi, "")
+      .replace(/<aside[^>]*>[\s\S]*?<\/aside>/gi, "")
+      .replace(/<!--[\s\S]*?-->/g, "")
+      .replace(/<noscript[^>]*>[\s\S]*?<\/noscript>/gi, "");
+
+    // Try to extract main content areas first
+    const mainMatch =
+      content.match(/<main[^>]*>([\s\S]*?)<\/main>/i) ||
+      content.match(/<article[^>]*>([\s\S]*?)<\/article>/i) ||
+      content.match(
+        /<div[^>]*class="[^"]*content[^"]*"[^>]*>([\s\S]*?)<\/div>/i
+      );
+
+    if (mainMatch) {
+      content = mainMatch[1];
+    }
+
+    // Convert block elements to newlines
+    content = content
+      .replace(/<\/p>/gi, "\n\n")
+      .replace(/<\/div>/gi, "\n")
+      .replace(/<\/h[1-6]>/gi, "\n\n")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<li[^>]*>/gi, "\n• ")
+      .replace(/<\/li>/gi, "");
+
+    // Remove remaining tags
+    content = content.replace(/<[^>]+>/g, " ");
+
+    // Clean up whitespace
+    content = content
+      .replace(/&nbsp;/g, " ")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
       .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, 5000);
-    return text || "Could not extract content from URL";
+      .replace(/\n\s+/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+
+    // Build output
+    let output = "";
+    if (title) output += `Title: ${title}\n\n`;
+    if (metaDesc) output += `Summary: ${metaDesc}\n\n`;
+    output += `Content:\n${content.slice(0, 6000)}`;
+
+    if (content.length > 6000) {
+      output += "\n\n[Content truncated...]";
+    }
+
+    return output || "Could not extract meaningful content from URL";
   } catch (error) {
-    return `Failed to fetch URL: ${error instanceof Error ? error.message : "Unknown error"}`;
+    return `Failed to scrape URL: ${error instanceof Error ? error.message : "Unknown error"}`;
   }
 }
 
@@ -158,17 +330,119 @@ const calculateSchema = z.object({
     .describe("Math expression to evaluate (e.g., 2+2, 100*0.15)"),
 });
 
+const firecrawlSearchSchema = z.object({
+  query: z.string().describe("Search query to find relevant web pages"),
+});
+
+const firecrawlScrapeSchema = z.object({
+  url: z.string().url().describe("URL to scrape with Firecrawl"),
+});
+
+/**
+ * Firecrawl search - requires API key
+ */
+async function firecrawlSearch(
+  query: string,
+  apiKey: string
+): Promise<string> {
+  try {
+    const response = await fetch("https://api.firecrawl.dev/v1/search", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        query,
+        limit: 5,
+        scrapeOptions: { formats: ["markdown"] },
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Firecrawl API error: ${error}`);
+    }
+
+    const result = await response.json();
+
+    if (!result.success || !result.data) {
+      return "No search results found.";
+    }
+
+    // Format results
+    return result.data
+      .slice(0, 5)
+      .map(
+        (item: { url?: string; title?: string; markdown?: string }, i: number) =>
+          `${i + 1}. ${item.title || "Untitled"}\n   URL: ${item.url || "N/A"}\n   ${item.markdown?.slice(0, 500) || ""}`
+      )
+      .join("\n\n");
+  } catch (error) {
+    return `Firecrawl search failed: ${error instanceof Error ? error.message : "Unknown error"}`;
+  }
+}
+
+/**
+ * Firecrawl scrape - requires API key
+ */
+async function firecrawlScrape(url: string, apiKey: string): Promise<string> {
+  try {
+    const response = await fetch("https://api.firecrawl.dev/v1/scrape", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        url,
+        formats: ["markdown"],
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Firecrawl API error: ${error}`);
+    }
+
+    const result = await response.json();
+
+    if (!result.success || !result.data?.markdown) {
+      return "Could not scrape URL.";
+    }
+
+    const markdown = result.data.markdown.slice(0, 8000);
+    const metadata = result.data.metadata || {};
+
+    let output = "";
+    if (metadata.title) output += `Title: ${metadata.title}\n`;
+    if (metadata.description) output += `Description: ${metadata.description}\n`;
+    output += `\nContent:\n${markdown}`;
+
+    if (result.data.markdown.length > 8000) {
+      output += "\n\n[Content truncated...]";
+    }
+
+    return output;
+  } catch (error) {
+    return `Firecrawl scrape failed: ${error instanceof Error ? error.message : "Unknown error"}`;
+  }
+}
+
 // Build tools based on user selection
-function buildTools(selectedTools: string[]) {
-  const allTools = {
+function buildTools(selectedTools: string[], firecrawlApiKey?: string) {
+  // biome-ignore lint/suspicious/noExplicitAny: Tool types are complex
+  const allTools: Record<string, any> = {
     web_search: tool({
-      description: "Search the web for information. Returns relevant results.",
+      description:
+        "Search the web for information using native search. Returns titles, snippets, and URLs.",
       inputSchema: webSearchSchema,
       execute: async ({ query }: z.infer<typeof webSearchSchema>) =>
         webSearch(query),
     }),
     scrape_url: tool({
-      description: "Fetch and extract text content from a URL.",
+      description:
+        "Fetch and extract text content from a URL using native scraping.",
       inputSchema: scrapeUrlSchema,
       execute: async ({ url }: z.infer<typeof scrapeUrlSchema>) =>
         scrapeUrl(url),
@@ -190,12 +464,39 @@ function buildTools(selectedTools: string[]) {
     }),
   };
 
-  const tools: typeof allTools = {} as typeof allTools;
+  // Add Firecrawl tools if API key is available
+  if (firecrawlApiKey) {
+    allTools.firecrawl_search = tool({
+      description:
+        "Search the web using Firecrawl (premium). Returns high-quality results with page content.",
+      inputSchema: firecrawlSearchSchema,
+      execute: async ({ query }: z.infer<typeof firecrawlSearchSchema>) =>
+        firecrawlSearch(query, firecrawlApiKey),
+    });
+    allTools.firecrawl_scrape = tool({
+      description:
+        "Scrape a URL using Firecrawl (premium). Returns clean markdown content.",
+      inputSchema: firecrawlScrapeSchema,
+      execute: async ({ url }: z.infer<typeof firecrawlScrapeSchema>) =>
+        firecrawlScrape(url, firecrawlApiKey),
+    });
+  }
+
+  // biome-ignore lint/suspicious/noExplicitAny: Tool types are complex
+  const tools: Record<string, any> = {};
   for (const name of selectedTools) {
     if (name in allTools) {
-      (tools as Record<string, (typeof allTools)[keyof typeof allTools]>)[
-        name
-      ] = allTools[name as keyof typeof allTools];
+      tools[name] = allTools[name];
+    } else if (
+      (name === "firecrawl_search" || name === "firecrawl_scrape") &&
+      !firecrawlApiKey
+    ) {
+      // Skip Firecrawl tools if no API key - will use native fallback
+      if (name === "firecrawl_search") {
+        tools.web_search = allTools.web_search;
+      } else if (name === "firecrawl_scrape") {
+        tools.scrape_url = allTools.scrape_url;
+      }
     }
   }
   return tools;
@@ -215,7 +516,8 @@ Instructions:
  */
 async function stepHandler(
   input: RunAgentCoreInput,
-  credentials: AiAgentCredentials
+  credentials: AiAgentCredentials,
+  firecrawlApiKey?: string
 ): Promise<RunAgentResult> {
   // Get model based on selected provider
   const provider = input.agentProvider || "openai";
@@ -285,7 +587,7 @@ async function stepHandler(
   // Check if this is a reasoning model (o1, o3)
   const isReasoningModel = modelId.includes("/o1") || modelId.includes("/o3");
 
-  const tools = buildTools(selectedTools);
+  const tools = buildTools(selectedTools, firecrawlApiKey);
   const agentSteps: AgentStep[] = [];
   let toolCallCount = 0;
 
@@ -387,7 +689,20 @@ export async function runAgentStep(
     ? await fetchCredentials(input.integrationId)
     : {};
 
-  return withStepLogging(input, () => stepHandler(input, credentials));
+  // Fetch Firecrawl credentials if integration ID is provided
+  let firecrawlApiKey: string | undefined;
+  if (input.agentFirecrawlIntegrationId) {
+    try {
+      const fcCreds = await fetchCredentials(input.agentFirecrawlIntegrationId);
+      firecrawlApiKey = fcCreds.FIRECRAWL_API_KEY;
+    } catch {
+      // Firecrawl not configured, will use native tools as fallback
+    }
+  }
+
+  return withStepLogging(input, () =>
+    stepHandler(input, credentials, firecrawlApiKey)
+  );
 }
 runAgentStep.maxRetries = 0;
 

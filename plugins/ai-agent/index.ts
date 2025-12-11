@@ -342,16 +342,34 @@ const aiAgentPlugin: IntegrationPlugin = {
           options: [
             {
               value: "web_search,scrape_url,calculate",
-              label: "Search + Scrape + Calculate (Default)",
+              label: "Native: Search + Scrape + Calculate (Default)",
             },
             {
               value: "web_search,scrape_url,http_request,calculate",
-              label: "All Tools",
+              label: "Native: All Tools",
             },
-            { value: "web_search", label: "Web Search Only" },
-            { value: "web_search,scrape_url", label: "Search + Scrape" },
-            { value: "http_request", label: "HTTP Request Only" },
+            { value: "web_search", label: "Native: Web Search Only" },
+            { value: "web_search,scrape_url", label: "Native: Search + Scrape" },
+            { value: "http_request", label: "Native: HTTP Request Only" },
+            {
+              value: "firecrawl_search,firecrawl_scrape,calculate",
+              label: "Firecrawl: Search + Scrape + Calculate (Requires Integration)",
+            },
+            {
+              value: "web_search,firecrawl_scrape,calculate",
+              label: "Hybrid: Native Search + Firecrawl Scrape + Calculate",
+            },
+            {
+              value: "web_search,scrape_url,firecrawl_search,firecrawl_scrape,http_request,calculate",
+              label: "All Tools (Native + Firecrawl)",
+            },
           ],
+        },
+        {
+          key: "agentFirecrawlIntegrationId",
+          label: "Firecrawl Integration ID",
+          type: "template-input",
+          placeholder: "Integration ID from your Firecrawl setup (required for Firecrawl tools)",
         },
         {
           key: "agentMaxSteps",
