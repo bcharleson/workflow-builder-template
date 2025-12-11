@@ -5,7 +5,7 @@ import { z } from "zod";
 import { fetchCredentials } from "@/lib/credential-fetcher";
 import { type StepInput, withStepLogging } from "@/lib/steps/step-handler";
 import { getErrorMessageAsync } from "@/lib/utils";
-import type { AiAgentCredentials } from "../credentials";
+import { type AiAgentCredentials, getProviderApiKey } from "../credentials";
 
 type AgentStep = {
   type: "tool_call" | "tool_result" | "text";
@@ -27,6 +27,7 @@ type RunAgentResult =
   | { success: false; error: { message: string } };
 
 export type RunAgentCoreInput = {
+  // Provider and model selection
   agentProvider?: string;
   agentModelOpenai?: string;
   agentModelAnthropic?: string;
@@ -34,6 +35,19 @@ export type RunAgentCoreInput = {
   agentModelMeta?: string;
   agentModelMistral?: string;
   agentModelGroq?: string;
+
+  // Advanced model configuration
+  agentShowAdvanced?: string;
+  agentTemperature?: string;
+  agentMaxTokens?: string;
+  agentTopP?: string;
+  agentFrequencyPenalty?: string;
+  agentPresencePenalty?: string;
+  agentReasoningEffort?: string;
+  agentStopSequences?: string;
+  agentResponseFormat?: string;
+
+  // Agent behavior
   agentGoal?: string;
   agentTools?: string;
   agentMaxSteps?: string;
@@ -202,14 +216,26 @@ async function stepHandler(
   input: RunAgentCoreInput,
   credentials: AiAgentCredentials
 ): Promise<RunAgentResult> {
-  const apiKey = credentials.AI_GATEWAY_API_KEY;
+  // Get model based on selected provider
+  const provider = input.agentProvider || "openai";
+  const modelId =
+    (provider === "openai" && input.agentModelOpenai) ||
+    (provider === "anthropic" && input.agentModelAnthropic) ||
+    (provider === "google" && input.agentModelGoogle) ||
+    (provider === "meta" && input.agentModelMeta) ||
+    (provider === "mistral" && input.agentModelMistral) ||
+    (provider === "groq" && input.agentModelGroq) ||
+    "openai/gpt-4o";
+
+  // Get the appropriate API key for the selected provider
+  const apiKey = getProviderApiKey(credentials, provider);
 
   if (!apiKey) {
+    const providerName = provider.charAt(0).toUpperCase() + provider.slice(1);
     return {
       success: false,
       error: {
-        message:
-          "AI_GATEWAY_API_KEY is not configured. Please add it in Project Integrations.",
+        message: `No API key configured for ${providerName}. Please add either a ${providerName} API key or an AI Gateway key in Project Integrations.`,
       },
     };
   }
@@ -222,16 +248,6 @@ async function stepHandler(
     };
   }
 
-  // Get model based on selected provider
-  const provider = input.agentProvider || "openai";
-  const modelId =
-    (provider === "openai" && input.agentModelOpenai) ||
-    (provider === "anthropic" && input.agentModelAnthropic) ||
-    (provider === "google" && input.agentModelGoogle) ||
-    (provider === "meta" && input.agentModelMeta) ||
-    (provider === "mistral" && input.agentModelMistral) ||
-    (provider === "groq" && input.agentModelGroq) ||
-    "openai/gpt-4o";
   const maxSteps = Math.min(
     50,
     Math.max(1, Number.parseInt(input.agentMaxSteps || "10", 10) || 10)
@@ -241,6 +257,32 @@ async function stepHandler(
   ).split(",");
   const systemPrompt = input.agentSystemPrompt || DEFAULT_SYSTEM_PROMPT;
 
+  // Parse advanced configuration options
+  const showAdvanced = input.agentShowAdvanced === "true";
+  const temperature = showAdvanced
+    ? Math.max(0, Math.min(2, Number.parseFloat(input.agentTemperature || "0.7")))
+    : 0.7;
+  const maxTokens = showAdvanced
+    ? Math.max(1, Number.parseInt(input.agentMaxTokens || "4096", 10))
+    : 4096;
+  const topP = showAdvanced
+    ? Math.max(0, Math.min(1, Number.parseFloat(input.agentTopP || "1.0")))
+    : 1.0;
+  const frequencyPenalty = showAdvanced
+    ? Math.max(-2, Math.min(2, Number.parseFloat(input.agentFrequencyPenalty || "0")))
+    : 0;
+  const presencePenalty = showAdvanced
+    ? Math.max(-2, Math.min(2, Number.parseFloat(input.agentPresencePenalty || "0")))
+    : 0;
+  const reasoningEffort = input.agentReasoningEffort || "medium";
+  const stopSequences = input.agentStopSequences
+    ? input.agentStopSequences.split(",").map((s) => s.trim())
+    : undefined;
+  const responseFormat = input.agentResponseFormat || "text";
+
+  // Check if this is a reasoning model (o1, o3)
+  const isReasoningModel = modelId.includes("/o1") || modelId.includes("/o3");
+
   const tools = buildTools(selectedTools);
   const agentSteps: AgentStep[] = [];
   let toolCallCount = 0;
@@ -248,12 +290,48 @@ async function stepHandler(
   try {
     const gateway = createGateway({ apiKey });
 
+    // Build provider options for reasoning models and JSON mode
+    // biome-ignore lint/suspicious/noExplicitAny: Provider-specific options vary by model
+    let providerOptions: Record<string, any> | undefined;
+
+    if (isReasoningModel) {
+      providerOptions = {
+        openai: {
+          reasoningEffort: reasoningEffort as "low" | "medium" | "high",
+        },
+      };
+    }
+
+    if (responseFormat === "json") {
+      providerOptions = {
+        ...providerOptions,
+        openai: {
+          ...(providerOptions?.openai || {}),
+          responseFormat: { type: "json_object" },
+        },
+      };
+    }
+
     const result = await generateText({
       model: gateway(modelId),
       system: systemPrompt,
       prompt: goal,
       tools,
       stopWhen: stepCountIs(maxSteps),
+      maxOutputTokens: maxTokens,
+      // Only include standard parameters for non-reasoning models
+      ...(isReasoningModel
+        ? {}
+        : {
+            temperature,
+            topP,
+            frequencyPenalty,
+            presencePenalty,
+          }),
+      // Include stop sequences if configured
+      ...(stopSequences && stopSequences.length > 0 ? { stopSequences } : {}),
+      // Include provider options if any
+      ...(providerOptions ? { providerOptions } : {}),
       onStepFinish: ({ toolCalls, toolResults, text }) => {
         if (toolCalls && toolResults) {
           for (let i = 0; i < toolCalls.length; i++) {
