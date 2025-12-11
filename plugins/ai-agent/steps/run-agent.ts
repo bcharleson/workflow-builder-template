@@ -27,7 +27,13 @@ type RunAgentResult =
   | { success: false; error: { message: string } };
 
 export type RunAgentCoreInput = {
-  agentModel?: string;
+  agentProvider?: string;
+  agentModelOpenai?: string;
+  agentModelAnthropic?: string;
+  agentModelGoogle?: string;
+  agentModelMeta?: string;
+  agentModelMistral?: string;
+  agentModelGroq?: string;
   agentGoal?: string;
   agentTools?: string;
   agentMaxSteps?: string;
@@ -216,7 +222,16 @@ async function stepHandler(
     };
   }
 
-  const modelId = input.agentModel || "openai/gpt-4o";
+  // Get model based on selected provider
+  const provider = input.agentProvider || "openai";
+  const modelId =
+    (provider === "openai" && input.agentModelOpenai) ||
+    (provider === "anthropic" && input.agentModelAnthropic) ||
+    (provider === "google" && input.agentModelGoogle) ||
+    (provider === "meta" && input.agentModelMeta) ||
+    (provider === "mistral" && input.agentModelMistral) ||
+    (provider === "groq" && input.agentModelGroq) ||
+    "openai/gpt-4o";
   const maxSteps = Math.min(
     50,
     Math.max(1, Number.parseInt(input.agentMaxSteps || "10", 10) || 10)
