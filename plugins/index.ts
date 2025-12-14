@@ -20,6 +20,7 @@ import "./clerk";
 import "./fal";
 import "./firecrawl";
 import "./github";
+import "./leadmagic";
 import "./linear";
 import "./perplexity";
 import "./resend";
