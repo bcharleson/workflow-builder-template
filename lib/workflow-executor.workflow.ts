@@ -7,6 +7,7 @@ import {
   preValidateConditionExpression,
   validateConditionExpression,
 } from "@/lib/condition-validator";
+import { findActionById, flattenConfigFields } from "@/plugins/registry";
 import {
   getActionLabel,
   getStepImporter,
@@ -222,6 +223,7 @@ async function executeActionStep(input: {
 }) {
   const { actionType, config, outputs, context } = input;
 
+  // Config is already filtered before this function is called
   // Build step input WITHOUT credentials, but WITH integrationId reference and logging context
   const stepInput: Record<string, unknown> = {
     ...config,
@@ -539,9 +541,27 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
           return;
         }
 
+        // Filter config to only include fields defined in the action's configFields
+        // This must happen BEFORE processTemplates to prevent extra fields from being processed
+        let filteredConfig = config;
+        const action = findActionById(actionType);
+        if (action) {
+          const validKeys = new Set(
+            flattenConfigFields(action.configFields).map((field) => field.key)
+          );
+          // Always include integrationId and actionType
+          validKeys.add("integrationId");
+          validKeys.add("actionType");
+          validKeys.add("condition"); // Keep condition for special handling
+
+          filteredConfig = Object.fromEntries(
+            Object.entries(config).filter(([key]) => validKeys.has(key))
+          );
+        }
+
         // Process templates in config, but keep condition unprocessed for special handling
-        const configWithoutCondition = { ...config };
-        const originalCondition = config.condition;
+        const configWithoutCondition = { ...filteredConfig };
+        const originalCondition = filteredConfig.condition;
         configWithoutCondition.condition = undefined;
 
         const processedConfig = processTemplates(
