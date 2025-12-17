@@ -53,3 +53,8 @@ lib/types/integration.ts
 lib/codegen-registry.ts
 lib/step-registry.ts
 lib/output-display-configs.ts
+
+# dev server logs
+dev.log
+dev.pid
+nohup.out
